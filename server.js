@@ -7,6 +7,14 @@ const port = 3000;
 // Enable CORS for all routes
 app.use(cors());
 
+// Set MIME type for .mjs files
+app.use((req, res, next) => {
+    if (req.path.endsWith('.mjs')) {
+        res.type('application/javascript');
+    }
+    next();
+});
+
 // Serve static files from the current directory
 app.use(express.static(__dirname));
 

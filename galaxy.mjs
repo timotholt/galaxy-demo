@@ -84,24 +84,25 @@ generateGalaxy();
 
 // Set up camera
 camera.position.z = 6;
-camera.position.y = 2;
+camera.position.y = 3;
 
 // Controls
 const moveSpeed = 0.1;
 const keys = {
     w: false, s: false, a: false, d: false,
-    ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false
+    ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+    q: false, e: false  // Add Q/E for up/down movement
 };
 
 window.addEventListener('keydown', (event) => {
-    if (keys.hasOwnProperty(event.key)) {
-        keys[event.key] = true;
+    if (keys.hasOwnProperty(event.key.toLowerCase())) {
+        keys[event.key.toLowerCase()] = true;
     }
 });
 
 window.addEventListener('keyup', (event) => {
-    if (keys.hasOwnProperty(event.key)) {
-        keys[event.key] = false;
+    if (keys.hasOwnProperty(event.key.toLowerCase())) {
+        keys[event.key.toLowerCase()] = false;
     }
 });
 
@@ -129,16 +130,29 @@ document.addEventListener('wheel', (event) => {
     camera.position.z = Math.max(2, Math.min(10, camera.position.z));
 });
 
+// Position display elements
+const posX = document.getElementById('pos-x');
+const posY = document.getElementById('pos-y');
+const posZ = document.getElementById('pos-z');
+
+function updatePositionDisplay() {
+    posX.textContent = camera.position.x.toFixed(2);
+    posY.textContent = camera.position.y.toFixed(2);
+    posZ.textContent = camera.position.z.toFixed(2);
+}
+
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
 
     // Movement
     const moveVector = new THREE.Vector3();
-    if (keys.w || keys.ArrowUp) moveVector.z -= moveSpeed;
-    if (keys.s || keys.ArrowDown) moveVector.z += moveSpeed;
-    if (keys.a || keys.ArrowLeft) moveVector.x -= moveSpeed;
-    if (keys.d || keys.ArrowRight) moveVector.x += moveSpeed;
+    if (keys.w || keys.arrowup) moveVector.z -= moveSpeed;
+    if (keys.s || keys.arrowdown) moveVector.z += moveSpeed;
+    if (keys.a || keys.arrowleft) moveVector.x -= moveSpeed;
+    if (keys.d || keys.arrowright) moveVector.x += moveSpeed;
+    if (keys.q) moveVector.y += moveSpeed;  // Move up
+    if (keys.e) moveVector.y -= moveSpeed;  // Move down
 
     moveVector.applyQuaternion(camera.quaternion);
     camera.position.add(moveVector);
@@ -150,6 +164,9 @@ function animate() {
     points.rotation.y += 0.002;
     points.rotation.x += (targetY - points.rotation.x) * 0.05;
     points.rotation.z += (targetX - points.rotation.z) * 0.05;
+
+    // Update position display
+    updatePositionDisplay();
 
     renderer.render(scene, camera);
 }

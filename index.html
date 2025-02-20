@@ -22,11 +22,26 @@
             pointer-events: none;
             opacity: 0.7;
         }
+        .key {
+            color: #ff6030;
+            font-weight: bold;
+        }
+        .position-display {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: #fff;
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
     </style>
-<script type="importmap">
+    <script type="importmap">
     {
         "imports": {
-            "three": "https://esm.sh/three@0.159.0"
+            "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js"
         }
     }
     </script>
@@ -34,10 +49,17 @@
 <body>
     <div class="info">
         <h2>Interactive Galaxy</h2>
-        <p>WASD / Arrow Keys to move</p>
-        <p>Mouse to rotate view</p>
-        <p>Scroll to zoom</p>
+        <p><span class="key">WASD</span> / Arrow Keys: Move forward/left/back/right</p>
+        <p><span class="key">Q/E</span>: Move up/down</p>
+        <p><span class="key">Mouse</span>: Rotate view</p>
+        <p><span class="key">Scroll</span>: Zoom</p>
     </div>
-    <script type="module" src="galaxy.js"></script>
+    <div class="position-display">
+        Camera Position:<br>
+        X: <span id="pos-x">0</span><br>
+        Y: <span id="pos-y">0</span><br>
+        Z: <span id="pos-z">0</span>
+    </div>
+    <script type="module" src="galaxy.mjs"></script>
 </body>
 </html>
