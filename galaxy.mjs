@@ -48,7 +48,15 @@ const params = {
     // Bass controls emission with bigger bursts on downbeats
     bassThreshold: 0.3,
     downbeatMultiplier: 3.0,
-    normalBeatMultiplier: 1.0
+    normalBeatMultiplier: 1.0,
+    
+    // Laser parameters
+    laserSpeed: 8, // Base speed (will be randomized slightly)
+    laserLifetime: 0.4, // Time in seconds before fading
+    laserMaxLength: 8, // Maximum stretch factor
+    laserBaseLength: 0.2, // Initial length of laser geometry
+    maxLasers: 0, // Maximum number of laser particles
+    bpm: 128, // Music BPM
 };
 
 // Color palettes that we'll interpolate between
@@ -462,6 +470,145 @@ function handleAudioFile(file) {
     }, { once: true });
 }
 
+// Laser system
+const laserLines = [];
+const basePoints = [];
+const numPoints = 32; // Number of points to distribute evenly
+const goldenRatio = (1 + Math.sqrt(5)) / 2;
+for (let i = 0; i < numPoints; i++) {
+    const y = 1 - (i / (numPoints - 1)) * 2; // Range from 1 to -1
+    const radius = Math.sqrt(1 - y * y);
+    const theta = 2 * Math.PI * i / goldenRatio;
+    const x = Math.cos(theta) * radius;
+    const z = Math.sin(theta) * radius;
+    basePoints.push(new THREE.Vector3(x, y, z));
+}
+
+const rotationMatrix = new THREE.Matrix4();
+const tempVector = new THREE.Vector3();
+
+function getRotatedPoints(time) {
+    // Create three rotations that change over time
+    const rotationX = time * 0.5;
+    const rotationY = time * 0.7;
+    const rotationZ = time * 0.3;
+    
+    rotationMatrix.makeRotationFromEuler(
+        new THREE.Euler(rotationX, rotationY, rotationZ)
+    );
+    
+    // Apply rotation to all base points
+    return basePoints.map(point => {
+        return tempVector.copy(point).applyMatrix4(rotationMatrix);
+    });
+}
+
+const laserGeometry = new THREE.PlaneGeometry(0.05, params.laserBaseLength);
+const laserMaterial = new THREE.MeshBasicMaterial({ 
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending
+});
+
+function createLaserParticle(time) {
+    const mesh = new THREE.Mesh(laserGeometry, laserMaterial.clone());
+    mesh.life = 1.0;
+    
+    // Calculate rotation speed based on BPM
+    // 360 degrees per beat, converted to radians
+    const rotationPerBeat = (Math.PI * 2) / (60 / params.bpm);
+    
+    // Get current rotation angles based on beats
+    const rotX = time * rotationPerBeat * 0.5; // Half speed on X
+    const rotY = time * rotationPerBeat; // Full speed on Y
+    const rotZ = time * rotationPerBeat * 0.25; // Quarter speed on Z
+    
+    // Random angle but rotated by current time
+    const phi = (Math.random() * Math.PI * 2) + rotZ;
+    const theta = (Math.random() * Math.PI) + rotX;
+    
+    // Create direction vector and rotate it
+    let direction = new THREE.Vector3(
+        Math.sin(theta) * Math.cos(phi),
+        Math.sin(theta) * Math.sin(phi),
+        Math.cos(theta)
+    );
+    
+    // Apply Y rotation
+    direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
+    
+    mesh.velocity = direction.multiplyScalar(params.laserSpeed * (0.9 + Math.random() * 0.2));
+    
+    // Start at center
+    mesh.position.set(0, 0, 0);
+    
+    // Create a temporary up vector for rotation
+    const up = new THREE.Vector3(0, 1, 0);
+    // Create rotation matrix to align with velocity
+    const matrix = new THREE.Matrix4();
+    matrix.lookAt(
+        new THREE.Vector3(0, 0, 0),
+        mesh.velocity,
+        up
+    );
+    mesh.quaternion.setFromRotationMatrix(matrix);
+    // Rotate 90 degrees on X to align properly
+    mesh.rotateX(Math.PI / 2);
+    
+    // Track time alive for stretching effect
+    mesh.timeAlive = 0;
+    
+    return mesh;
+}
+
+function updateLasers(deltaTime, midFreq, time) {
+    // Remove dead lasers
+    for (let i = laserLines.length - 1; i >= 0; i--) {
+        const laser = laserLines[i];
+        laser.life -= deltaTime / params.laserLifetime;
+        laser.timeAlive += deltaTime;
+        
+        if (laser.life <= 0) {
+            scene.remove(laser);
+            laserLines.splice(i, 1);
+        } else {
+            // Move in 3D space
+            laser.position.x += laser.velocity.x * deltaTime;
+            laser.position.y += laser.velocity.y * deltaTime;
+            laser.position.z += laser.velocity.z * deltaTime;
+            
+            // Update color to match current palette
+            const colorBlend = (Math.sin(time * 0.5) + 1) * 0.5;
+            const color = new THREE.Color();
+            color.lerpColors(
+                new THREE.Color(params.insideColor),
+                new THREE.Color(params.outsideColor),
+                colorBlend
+            );
+            laser.material.color = color;
+            
+            // Update opacity
+            laser.material.opacity = laser.life * 0.8;
+            
+            // Start round, then stretch based on velocity
+            const stretch = Math.min(params.laserMaxLength, 1 + laser.timeAlive * 16);
+            laser.scale.set(0.8, stretch, 1);
+        }
+    }
+    
+    // Add new lasers based on mid frequency
+    if (midFreq > 0.4 && laserLines.length < params.maxLasers) {
+        // Create multiple lasers per frame
+        for (let i = 0; i < 32; i++) {
+            if (laserLines.length >= params.maxLasers) break;
+            const laser = createLaserParticle(Date.now() * 0.001);
+            scene.add(laser);
+            laserLines.push(laser);
+        }
+    }
+}
+
 // BPM detection
 let bpmTimeData = null;
 let lastPeakTime = 0;
@@ -650,10 +797,13 @@ function animate() {
         params.maxParticles = Math.floor(20000 * particleCountMultiplier);
         
         // Update pulse and bloom
-        const pulse = bass * 2.0 + 0.5;
+        const pulse = THREE.MathUtils.lerp(0.8, 1.2, mids);
         const bloomStrength = params.bloomStrength * (1 + mids * 2.0);
         material.uniforms.globalSize.value = pulse;
         bloomPass.strength = THREE.MathUtils.lerp(params.minBloomStrength, params.maxBloomStrength * 2, pulse);
+        
+        // Update lasers with mid frequencies
+        updateLasers(deltaTime, mids, time);
     }
     
     // Update particles with dynamic emission rate
