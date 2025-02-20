@@ -66,6 +66,13 @@
         Y: <span id="pos-y">0</span><br>
         Z: <span id="pos-z">0</span>
     </div>
+    <div id="fps" style="position: fixed; top: 10px; left: 10px; color: white; font-family: monospace; display: none;"></div>
+    <div style="position: fixed; bottom: 20px; left: 20px; display: flex; gap: 10px; align-items: center;">
+        <button id="startAudio" style="padding: 10px; background: rgba(255,255,255,0.2); color: white; border: 1px solid white; cursor: pointer;">
+            Start Audio
+        </button>
+        <input type="file" id="audioFile" accept="audio/*" style="color: white;" />
+    </div>
     <script type="module" src="galaxy.mjs"></script>
 </body>
 </html>

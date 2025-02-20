@@ -313,6 +313,61 @@ function updatePositionDisplay() {
     posZ.textContent = camera.position.z.toFixed(2);
 }
 
+// Audio setup
+let audioContext;
+let analyzer;
+let audioSource;
+let dataArray;
+let audio;
+let isAudioInitialized = false;
+
+// Initialize audio
+function initAudio() {
+    if (isAudioInitialized) return;
+    
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyzer = audioContext.createAnalyser();
+    analyzer.fftSize = 64; // Keep it small for performance
+    analyzer.smoothingTimeConstant = 0.8; // Smooth out the visualization
+    
+    dataArray = new Uint8Array(analyzer.frequencyBinCount);
+    audio = new Audio();
+    
+    isAudioInitialized = true;
+}
+
+// Setup audio file handling
+document.getElementById('startAudio').addEventListener('click', () => {
+    initAudio();
+    audioContext.resume();
+});
+
+document.getElementById('audioFile').addEventListener('change', (event) => {
+    initAudio();
+    
+    const file = event.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const arrayBuffer = e.target.result;
+            audioContext.decodeAudioData(arrayBuffer)
+                .then(buffer => {
+                    if (audioSource) {
+                        audioSource.disconnect();
+                    }
+                    audioSource = audioContext.createBufferSource();
+                    audioSource.buffer = buffer;
+                    audioSource.connect(analyzer);
+                    analyzer.connect(audioContext.destination);
+                    audioSource.start(0);
+                    audioSource.loop = true;
+                })
+                .catch(e => console.error("Error decoding audio:", e));
+        };
+        reader.readAsArrayBuffer(file);
+    }
+});
+
 // Generate galaxy
 generateGalaxy();
 
@@ -407,16 +462,35 @@ function animate() {
     // Update colors
     updateParticleColors(time);
     
-    // Pulsing effect with clamped brightness
-    const pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5;
-    material.uniforms.globalSize.value = pulse * 0.3 + 0.7;
+    // Audio reactive updates
+    let pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5; // Default animation
+    let bloomStrength = params.bloomStrength;
     
-    const bloomStrength = THREE.MathUtils.lerp(
+    if (isAudioInitialized && analyzer) {
+        analyzer.getByteFrequencyData(dataArray);
+        
+        // Get frequency bands
+        const bass = average(dataArray.slice(0, 4)) / 255;
+        const mids = average(dataArray.slice(4, 21)) / 255;
+        const highs = average(dataArray.slice(21, 32)) / 255;
+        
+        // Use bass for size pulsing
+        pulse = bass * 0.5 + 0.7; // Range: 0.7 to 1.2
+        
+        // Use mids for bloom
+        bloomStrength = params.bloomStrength * (1 + mids * 0.5);
+        
+        // Optional: Use highs for rotation speed
+        params.rotationSpeed = 0.6 + highs * 0.4;
+    }
+    
+    // Apply effects
+    material.uniforms.globalSize.value = pulse;
+    bloomPass.strength = THREE.MathUtils.lerp(
         params.minBloomStrength,
         params.maxBloomStrength,
         pulse
     );
-    bloomPass.strength = bloomStrength;
     
     // Rotation
     if (points) {
@@ -449,6 +523,11 @@ function animate() {
     
     // Render with post-processing
     composer.render();
+}
+
+// Utility function to calculate average of array
+function average(arr) {
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
 animate();
