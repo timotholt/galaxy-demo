@@ -410,29 +410,35 @@ function loadLastFile() {
 function handleAudioFile(file) {
     if (!file) return;
     
-    // Create or update audio element
-    if (!audioElement) {
-        audioElement = new Audio();
-        audioElement.addEventListener('ended', () => {
-            audioElement.currentTime = 0;
-            audioElement.play();
-        });
-    }
-    
-    // Clean up old audio source if it exists
-    if (audioSource) {
-        audioSource.disconnect();
+    // Clean up old audio context and connections
+    if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+        analyzer = null;
         audioSource = null;
     }
     
-    // Set up audio context if needed
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        analyzer = audioContext.createAnalyser();
-        analyzer.fftSize = 1024; // Increased for better BPM detection
-        dataArray = new Uint8Array(analyzer.frequencyBinCount);
-        initBPMDetection();
+    // Clean up old audio element
+    if (audioElement) {
+        audioElement.pause();
+        audioElement.src = '';
+        audioElement.remove();
+        audioElement = null;
     }
+
+    // Create new audio context
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyzer = audioContext.createAnalyser();
+    analyzer.fftSize = 1024; // Increased for better BPM detection
+    dataArray = new Uint8Array(analyzer.frequencyBinCount);
+    initBPMDetection();
+    
+    // Create new audio element
+    audioElement = new Audio();
+    audioElement.addEventListener('ended', () => {
+        audioElement.currentTime = 0;
+        audioElement.play();
+    });
     
     // Use URL.createObjectURL for the audio source
     const fileUrl = URL.createObjectURL(file);
@@ -520,10 +526,6 @@ function detectBPM() {
 }
 
 // Setup audio file handling
-document.getElementById('startAudio').addEventListener('click', () => {
-    audioContext.resume();
-});
-
 document.getElementById('audioFile').addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (file) {
