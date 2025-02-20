@@ -19,8 +19,10 @@ let points = null;
 // Galaxy parameters
 const params = {
     particles: 50000,
-    size: 0.05,
+    size: 0.05,         // Max particle size
+    minSize: 0.01,      // Min particle size
     radius: 5,
+    height: 0.8,        // Vertical spread of the galaxy
     branches: 5,
     spin: 1,
     randomness: 0.2,
@@ -59,7 +61,8 @@ let particleSystem = {
     alive: [],         // Array of booleans
     speedFactors: [],  // Array of numbers
     rotationFactors: [], // Array of numbers
-    mixFactors: []     // Array of numbers
+    mixFactors: [],     // Array of numbers
+    sizes: []           // Array of numbers
 };
 
 function generateParticle() {
@@ -70,22 +73,38 @@ function generateParticle() {
     // Start from center
     const position = new THREE.Vector3(0, 0, 0);
     
-    // Calculate target position with spin
+    // Calculate target position with spin and height
     const spinAngle = radius * params.spin;
+    const heightScale = 1 - (radius / params.radius); // More height variation near center
     const targetX = Math.cos(branchAngle + spinAngle) * radius;
-    const targetY = Math.random() * 0.2 - 0.1;
+    const targetY = (Math.random() - 0.5) * params.height * heightScale;
     const targetZ = Math.sin(branchAngle + spinAngle) * radius;
+    
+    // Add spherical randomness
+    const randomAngle = Math.random() * Math.PI * 2;
+    const randomRadius = Math.pow(Math.random(), params.randomnessPower) * params.randomness * radius;
+    const randomX = Math.cos(randomAngle) * randomRadius;
+    const randomY = (Math.random() - 0.5) * params.randomness * radius;
+    const randomZ = Math.sin(randomAngle) * randomRadius;
+    
+    // Calculate size based on radius (smaller at edges)
+    const sizeFactor = Math.pow(1 - (radius / params.radius), 0.5); // Square root for more medium-sized particles
+    const size = THREE.MathUtils.lerp(params.minSize, params.size, sizeFactor);
     
     // Randomize speed
     const speedFactor = 1 + (Math.random() - 0.5) * params.speedVariation;
     const rotationFactor = 1 + (Math.random() - 0.5) * params.rotationVariation;
     
-    // Calculate velocity (direction from center to target)
-    const velocity = new THREE.Vector3(targetX, targetY, targetZ);
+    // Calculate velocity with added randomness
+    const velocity = new THREE.Vector3(
+        targetX + randomX,
+        targetY + randomY,
+        targetZ + randomZ
+    );
     velocity.multiplyScalar(speedFactor / params.particleLifetime);
     
     // Add tangential velocity for rotation
-    const tangentialVelocity = new THREE.Vector3(-targetZ, 0, targetX);
+    const tangentialVelocity = new THREE.Vector3(-velocity.z, 0, velocity.x);
     tangentialVelocity.normalize().multiplyScalar(radius * params.rotationSpeed * rotationFactor);
     velocity.add(tangentialVelocity);
     
@@ -97,7 +116,8 @@ function generateParticle() {
         position: position,
         velocity: velocity,
         color: color,
-        mixFactor: mixColor,  // Store the mix factor for color updates
+        mixFactor: mixColor,
+        size: size,
         age: 0,
         alive: true,
         speedFactor: speedFactor,
@@ -121,10 +141,12 @@ function updateParticles(deltaTime) {
         particleSystem.speedFactors.push(particle.speedFactor);
         particleSystem.rotationFactors.push(particle.rotationFactor);
         particleSystem.mixFactors.push(particle.mixFactor);
+        particleSystem.sizes.push(particle.size);
     }
     
     // Update positions array directly
     const positions = geometry.attributes.position.array;
+    const sizes = geometry.attributes.size.array;
     
     // Update existing particles
     for(let i = particleSystem.positions.length - 1; i >= 0; i--) {
@@ -141,6 +163,9 @@ function updateParticles(deltaTime) {
         positions[idx + 1] = pos.y;
         positions[idx + 2] = pos.z;
         
+        // Update size
+        sizes[i] = particleSystem.sizes[i];
+        
         // Update age
         particleSystem.ages[i] += deltaTime;
         
@@ -156,10 +181,12 @@ function updateParticles(deltaTime) {
             particleSystem.speedFactors.splice(i, 1);
             particleSystem.rotationFactors.splice(i, 1);
             particleSystem.mixFactors.splice(i, 1);
+            particleSystem.sizes.splice(i, 1);
         }
     }
     
     geometry.attributes.position.needsUpdate = true;
+    geometry.attributes.size.needsUpdate = true;
 }
 
 // Update particle colors based on current palette
@@ -203,19 +230,30 @@ function generateGalaxy() {
     geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(params.maxParticles * 3);
     const colors = new Float32Array(params.maxParticles * 3);
+    const sizes = new Float32Array(params.maxParticles);
     
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
     
     material = new THREE.PointsMaterial({
-        size: params.size,
+        size: 1.0,  // Base size multiplier
         sizeAttenuation: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         vertexColors: true,
         transparent: true,
         alphaMap: particleTexture,
-        opacity: 0.6
+        opacity: 0.6,
+        vertexShader: `
+            attribute float size;
+            void main() {
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = size * (300.0 / -mvPosition.z);
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `,
+        fragmentShader: material ? material.fragmentShader : null
     });
 
     points = new THREE.Points(geometry, material);
@@ -230,7 +268,8 @@ function generateGalaxy() {
         alive: [],
         speedFactors: [],
         rotationFactors: [],
-        mixFactors: []
+        mixFactors: [],
+        sizes: []
     };
 }
 
