@@ -227,6 +227,10 @@ const keys = {
 };
 
 window.addEventListener('keydown', (event) => {
+    if (event.key.toLowerCase() === 'f') {
+        showFPS = !showFPS;
+        fpsElement.style.display = showFPS ? 'block' : 'none';
+    }
     if (keys.hasOwnProperty(event.key.toLowerCase())) {
         keys[event.key.toLowerCase()] = true;
     }
@@ -263,12 +267,41 @@ document.addEventListener('wheel', (event) => {
     camera.position.z = Math.max(2, Math.min(10, camera.position.z));
 });
 
+// FPS counter
+let showFPS = false;
+let frameCount = 0;
+let lastTime = performance.now();
+const fpsElement = document.createElement('div');
+fpsElement.style.position = 'fixed';
+fpsElement.style.top = '10px';
+fpsElement.style.left = '10px';
+fpsElement.style.color = '#00ff00';
+fpsElement.style.fontFamily = 'monospace';
+fpsElement.style.fontSize = '16px';
+fpsElement.style.fontWeight = 'bold';
+fpsElement.style.textShadow = '1px 1px 1px black';
+fpsElement.style.display = 'none';
+document.body.appendChild(fpsElement);
+
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
     
     const time = Date.now() * 0.001;
     const deltaTime = 1/60; // Fixed timestep
+    
+    // Update FPS counter
+    if (showFPS) {
+        frameCount++;
+        const currentTime = performance.now();
+        const elapsed = currentTime - lastTime;
+        if (elapsed >= 1000) {
+            const fps = Math.round((frameCount * 1000) / elapsed);
+            fpsElement.textContent = `FPS: ${fps}`;
+            frameCount = 0;
+            lastTime = currentTime;
+        }
+    }
     
     // Update particles
     updateParticles(deltaTime);
