@@ -10,13 +10,19 @@ app.use(cors());
 // Set MIME type for .mjs files
 app.use((req, res, next) => {
     if (req.path.endsWith('.mjs')) {
-        res.type('application/javascript');
+        res.set('Content-Type', 'application/javascript');
     }
     next();
 });
 
 // Serve static files from the current directory
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+    setHeaders: (res, path) => {
+        if (path.endsWith('.mjs')) {
+            res.set('Content-Type', 'application/javascript');
+        }
+    }
+}));
 
 // Handle all routes by serving index.html
 app.get('*', (req, res) => {

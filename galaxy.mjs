@@ -1,16 +1,20 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 // Create scene
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 1);
 document.body.appendChild(renderer.domElement);
 
 // Galaxy parameters
 const params = {
     particles: 50000,
-    size: 0.02,
+    size: 0.05,
     radius: 5,
     branches: 5,
     spin: 1,
@@ -18,17 +22,15 @@ const params = {
     randomnessPower: 3,
     insideColor: '#ff6030',
     outsideColor: '#1b3984',
-    animationDuration: 3 // seconds for full expansion
+    bloomStrength: 0.8,
+    bloomRadius: 0.75,
+    bloomThreshold: 0.2,
+    pulseSpeed: 2.0,
+    maxBloomStrength: 1.2,
+    minBloomStrength: 0.4
 };
 
-// Create galaxy geometry
-let geometry = null;
-let material = null;
-let points = null;
-let startTime = Date.now();
-
 // Create circular texture for particles
-const textureLoader = new THREE.TextureLoader();
 const particleTexture = new THREE.CanvasTexture((() => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -46,6 +48,24 @@ const particleTexture = new THREE.CanvasTexture((() => {
     return canvas;
 })());
 
+// Post processing setup
+const renderScene = new RenderPass(scene, camera);
+const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    params.bloomStrength,
+    params.bloomRadius,
+    params.bloomThreshold
+);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(renderScene);
+composer.addPass(bloomPass);
+
+// Create galaxy geometry
+let geometry = null;
+let material = null;
+let points = null;
+
 function generateGalaxy() {
     if (points !== null) {
         geometry.dispose();
@@ -56,9 +76,6 @@ function generateGalaxy() {
     geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(params.particles * 3);
     const colors = new Float32Array(params.particles * 3);
-    const scales = new Float32Array(params.particles);
-    const randomness = new Float32Array(params.particles * 3);
-    const finalPositions = new Float32Array(params.particles * 3);
 
     const insideColor = new THREE.Color(params.insideColor);
     const outsideColor = new THREE.Color(params.outsideColor);
@@ -71,24 +88,13 @@ function generateGalaxy() {
         const spinAngle = radius * params.spin;
         const branchAngle = ((i % params.branches) / params.branches) * Math.PI * 2;
 
-        // Store final positions
-        const randX = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
-        const randY = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
-        const randZ = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
+        const randomX = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
+        const randomY = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
+        const randomZ = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
 
-        finalPositions[i3] = Math.cos(branchAngle + spinAngle) * radius + randX;
-        finalPositions[i3 + 1] = randY;
-        finalPositions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randZ;
-
-        // Start all particles at center
-        positions[i3] = 0;
-        positions[i3 + 1] = 0;
-        positions[i3 + 2] = 0;
-
-        // Store randomness
-        randomness[i3] = randX;
-        randomness[i3 + 1] = randY;
-        randomness[i3 + 2] = randZ;
+        positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
+        positions[i3 + 1] = randomY;
+        positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
 
         // Color
         const mixedColor = insideColor.clone();
@@ -97,18 +103,10 @@ function generateGalaxy() {
         colors[i3] = mixedColor.r;
         colors[i3 + 1] = mixedColor.g;
         colors[i3 + 2] = mixedColor.b;
-
-        // Random scale for variety
-        scales[i] = Math.random() * 2 + 0.5;
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('aScale', new THREE.BufferAttribute(scales, 1));
-    
-    // Store final positions and randomness in userData for animation
-    geometry.userData.finalPositions = finalPositions;
-    geometry.userData.randomness = randomness;
 
     material = new THREE.PointsMaterial({
         size: params.size,
@@ -117,28 +115,49 @@ function generateGalaxy() {
         blending: THREE.AdditiveBlending,
         vertexColors: true,
         transparent: true,
-        alphaMap: particleTexture
+        alphaMap: particleTexture,
+        opacity: 0.6
     });
 
     points = new THREE.Points(geometry, material);
     scene.add(points);
-    startTime = Date.now(); // Reset animation time
+    
+    console.log('Galaxy generated:', {
+        geometryAttributes: Object.keys(geometry.attributes),
+        materialProperties: {
+            size: material.size,
+            transparent: material.transparent,
+            blending: material.blending
+        },
+        sceneChildren: scene.children.length
+    });
 }
-
-// Generate galaxy
-generateGalaxy();
 
 // Set up camera
 camera.position.x = 0;
 camera.position.y = -0.20;
 camera.position.z = 3.35;
 
+// Position display elements
+const posX = document.getElementById('pos-x');
+const posY = document.getElementById('pos-y');
+const posZ = document.getElementById('pos-z');
+
+function updatePositionDisplay() {
+    posX.textContent = camera.position.x.toFixed(2);
+    posY.textContent = camera.position.y.toFixed(2);
+    posZ.textContent = camera.position.z.toFixed(2);
+}
+
+// Generate galaxy
+generateGalaxy();
+
 // Controls
 const moveSpeed = 0.1;
 const keys = {
     w: false, s: false, a: false, d: false,
     ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
-    q: false, e: false  // Add Q/E for up/down movement
+    q: false, e: false
 };
 
 window.addEventListener('keydown', (event) => {
@@ -170,6 +189,7 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
 });
 
 document.addEventListener('wheel', (event) => {
@@ -177,49 +197,32 @@ document.addEventListener('wheel', (event) => {
     camera.position.z = Math.max(2, Math.min(10, camera.position.z));
 });
 
-// Position display elements
-const posX = document.getElementById('pos-x');
-const posY = document.getElementById('pos-y');
-const posZ = document.getElementById('pos-z');
-
-function updatePositionDisplay() {
-    posX.textContent = camera.position.x.toFixed(2);
-    posY.textContent = camera.position.y.toFixed(2);
-    posZ.textContent = camera.position.z.toFixed(2);
-}
-
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
-
-    // Calculate animation progress
-    const elapsedTime = (Date.now() - startTime) / 1000;
-    const progress = Math.min(elapsedTime / params.animationDuration, 1);
-    const easeProgress = 1 - Math.cos(progress * Math.PI * 0.5); // Smooth easing
-
-    // Update particle positions
-    if (progress < 1) {
-        const positions = points.geometry.attributes.position.array;
-        const finalPositions = points.geometry.userData.finalPositions;
-        
-        for (let i = 0; i < params.particles; i++) {
-            const i3 = i * 3;
-            positions[i3] = finalPositions[i3] * easeProgress;
-            positions[i3 + 1] = finalPositions[i3 + 1] * easeProgress;
-            positions[i3 + 2] = finalPositions[i3 + 2] * easeProgress;
-        }
-        
-        points.geometry.attributes.position.needsUpdate = true;
-    }
-
+    
+    const time = Date.now() * 0.001;
+    
+    // Pulsing effect with clamped brightness
+    const pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5; // Normalized to 0-1
+    material.size = params.size * (pulse * 0.3 + 0.7); // Less size variation
+    
+    // Clamp bloom strength between min and max values
+    const bloomStrength = THREE.MathUtils.lerp(
+        params.minBloomStrength,
+        params.maxBloomStrength,
+        pulse
+    );
+    bloomPass.strength = bloomStrength;
+    
     // Movement
     const moveVector = new THREE.Vector3();
     if (keys.w || keys.arrowup) moveVector.z -= moveSpeed;
     if (keys.s || keys.arrowdown) moveVector.z += moveSpeed;
     if (keys.a || keys.arrowleft) moveVector.x -= moveSpeed;
     if (keys.d || keys.arrowright) moveVector.x += moveSpeed;
-    if (keys.q) moveVector.y += moveSpeed;  // Move up
-    if (keys.e) moveVector.y -= moveSpeed;  // Move down
+    if (keys.q) moveVector.y += moveSpeed;
+    if (keys.e) moveVector.y -= moveSpeed;
 
     moveVector.applyQuaternion(camera.quaternion);
     camera.position.add(moveVector);
@@ -228,14 +231,17 @@ function animate() {
     targetX = mouseX * 0.001;
     targetY = mouseY * 0.001;
 
-    points.rotation.y += 0.002;
-    points.rotation.x += (targetY - points.rotation.x) * 0.05;
-    points.rotation.z += (targetX - points.rotation.z) * 0.05;
-
+    if (points) {
+        points.rotation.y += 0.001;
+        points.rotation.x += (targetY - points.rotation.x) * 0.05;
+        points.rotation.z += (targetX - points.rotation.z) * 0.05;
+    }
+    
     // Update position display
     updatePositionDisplay();
-
-    renderer.render(scene, camera);
+    
+    // Render with post-processing
+    composer.render();
 }
 
 animate();
