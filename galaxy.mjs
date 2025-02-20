@@ -328,7 +328,7 @@ function initAudio() {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     analyzer = audioContext.createAnalyser();
     analyzer.fftSize = 64; // Keep it small for performance
-    analyzer.smoothingTimeConstant = 0.8; // Smooth out the visualization
+    analyzer.smoothingTimeConstant = 0.5; // Faster response to music
     
     dataArray = new Uint8Array(analyzer.frequencyBinCount);
     audio = new Audio();
@@ -469,26 +469,36 @@ function animate() {
     if (isAudioInitialized && analyzer) {
         analyzer.getByteFrequencyData(dataArray);
         
-        // Get frequency bands
-        const bass = average(dataArray.slice(0, 4)) / 255;
-        const mids = average(dataArray.slice(4, 21)) / 255;
-        const highs = average(dataArray.slice(21, 32)) / 255;
+        // Get frequency bands - use exponential scaling for more dramatic effect
+        const bass = Math.pow(average(dataArray.slice(0, 4)) / 255, 2);
+        const mids = Math.pow(average(dataArray.slice(4, 21)) / 255, 2);
+        const highs = Math.pow(average(dataArray.slice(21, 32)) / 255, 2);
         
-        // Use bass for size pulsing
-        pulse = bass * 0.5 + 0.7; // Range: 0.7 to 1.2
+        // Much more dramatic size pulsing
+        pulse = bass * 2.0 + 0.5; // Range: 0.5 to 2.5
         
-        // Use mids for bloom
-        bloomStrength = params.bloomStrength * (1 + mids * 0.5);
+        // Stronger bloom effect
+        bloomStrength = params.bloomStrength * (1 + mids * 2.0);
         
-        // Optional: Use highs for rotation speed
-        params.rotationSpeed = 0.6 + highs * 0.4;
+        // More dramatic rotation and movement
+        params.rotationSpeed = 0.2 + highs * 2.0;
+        
+        // Add some vertical movement based on mids
+        points.position.y = Math.sin(time) * mids * 2.0;
+        
+        // Scale the entire galaxy with the bass
+        const scale = 1.0 + bass * 0.5;
+        points.scale.set(scale, scale, scale);
+        
+        // Color cycle speed affected by highs
+        params.colorCycleSpeed = 0.3 + highs * 0.5;
     }
     
     // Apply effects
     material.uniforms.globalSize.value = pulse;
     bloomPass.strength = THREE.MathUtils.lerp(
         params.minBloomStrength,
-        params.maxBloomStrength,
+        params.maxBloomStrength * 2,  // Double the max bloom
         pulse
     );
     
