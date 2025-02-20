@@ -25,19 +25,30 @@ const params = {
     spin: 1,
     randomness: 0.2,
     randomnessPower: 3,
-    insideColor: '#ff6030',
-    outsideColor: '#1b3984',
+    insideColor: '#ff6030',   // Warm orange
+    outsideColor: '#1b3984',  // Cool blue
+    colorCycleSpeed: 0.3,     // How fast colors change
     bloomStrength: 0.8,
     bloomRadius: 0.75,
     bloomThreshold: 0.2,
     pulseSpeed: 2.0,
     maxBloomStrength: 1.2,
     minBloomStrength: 0.4,
-    particleLifetime: 5.0,    // How long particles live in seconds
-    emissionRate: 1000,       // Particles per second
-    maxParticles: 50000,      // Maximum particles in system
-    rotationSpeed: 0.6        // Rotation speed parameter
+    particleLifetime: 5.0,
+    emissionRate: 1000,
+    maxParticles: 50000,
+    rotationSpeed: 0.6,
+    speedVariation: 0.5,     // How much particle speeds can vary
+    rotationVariation: 0.5   // How much rotation speeds can vary
 };
+
+// Color palettes that we'll interpolate between
+const colorPalettes = [
+    { inside: '#ff6030', outside: '#1b3984' },  // Orange to Blue
+    { inside: '#ff1b84', outside: '#30ff60' },  // Pink to Green
+    { inside: '#6030ff', outside: '#84ff1b' },  // Purple to Lime
+    { inside: '#ff3060', outside: '#1b84ff' }   // Red to Light Blue
+];
 
 // Particle system
 let particleSystem = {
@@ -45,7 +56,10 @@ let particleSystem = {
     velocities: [],     // Array of Vector3
     colors: [],        // Array of Color
     ages: [],          // Array of numbers (seconds)
-    alive: []          // Array of booleans
+    alive: [],         // Array of booleans
+    speedFactors: [],  // Array of numbers
+    rotationFactors: [], // Array of numbers
+    mixFactors: []     // Array of numbers
 };
 
 function generateParticle() {
@@ -62,13 +76,17 @@ function generateParticle() {
     const targetY = Math.random() * 0.2 - 0.1;
     const targetZ = Math.sin(branchAngle + spinAngle) * radius;
     
+    // Randomize speed
+    const speedFactor = 1 + (Math.random() - 0.5) * params.speedVariation;
+    const rotationFactor = 1 + (Math.random() - 0.5) * params.rotationVariation;
+    
     // Calculate velocity (direction from center to target)
     const velocity = new THREE.Vector3(targetX, targetY, targetZ);
-    velocity.multiplyScalar(1.0 / params.particleLifetime); // Speed to reach target over lifetime
+    velocity.multiplyScalar(speedFactor / params.particleLifetime);
     
     // Add tangential velocity for rotation
     const tangentialVelocity = new THREE.Vector3(-targetZ, 0, targetX);
-    tangentialVelocity.normalize().multiplyScalar(radius * params.rotationSpeed);
+    tangentialVelocity.normalize().multiplyScalar(radius * params.rotationSpeed * rotationFactor);
     velocity.add(tangentialVelocity);
     
     // Calculate color
@@ -79,8 +97,11 @@ function generateParticle() {
         position: position,
         velocity: velocity,
         color: color,
+        mixFactor: mixColor,  // Store the mix factor for color updates
         age: 0,
-        alive: true
+        alive: true,
+        speedFactor: speedFactor,
+        rotationFactor: rotationFactor
     };
 }
 
@@ -95,17 +116,30 @@ function updateParticles(deltaTime) {
         const particle = generateParticle();
         particleSystem.positions.push(particle.position);
         particleSystem.velocities.push(particle.velocity);
-        particleSystem.colors.push(particle.color);
         particleSystem.ages.push(particle.age);
         particleSystem.alive.push(particle.alive);
+        particleSystem.speedFactors.push(particle.speedFactor);
+        particleSystem.rotationFactors.push(particle.rotationFactor);
+        particleSystem.mixFactors.push(particle.mixFactor);
     }
+    
+    // Update positions array directly
+    const positions = geometry.attributes.position.array;
     
     // Update existing particles
     for(let i = particleSystem.positions.length - 1; i >= 0; i--) {
         if (!particleSystem.alive[i]) continue;
         
         // Update position
-        particleSystem.positions[i].add(particleSystem.velocities[i].clone().multiplyScalar(deltaTime));
+        const pos = particleSystem.positions[i];
+        const vel = particleSystem.velocities[i];
+        pos.add(vel.clone().multiplyScalar(deltaTime));
+        
+        // Update buffer
+        const idx = i * 3;
+        positions[idx] = pos.x;
+        positions[idx + 1] = pos.y;
+        positions[idx + 2] = pos.z;
         
         // Update age
         particleSystem.ages[i] += deltaTime;
@@ -117,21 +151,45 @@ function updateParticles(deltaTime) {
             // Remove dead particle
             particleSystem.positions.splice(i, 1);
             particleSystem.velocities.splice(i, 1);
-            particleSystem.colors.splice(i, 1);
             particleSystem.ages.splice(i, 1);
             particleSystem.alive.splice(i, 1);
+            particleSystem.speedFactors.splice(i, 1);
+            particleSystem.rotationFactors.splice(i, 1);
+            particleSystem.mixFactors.splice(i, 1);
         }
     }
     
-    // Update geometry
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(
-        particleSystem.positions.flatMap(p => [p.x, p.y, p.z]), 3
-    ));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(
-        particleSystem.colors.flatMap(c => [c.r, c.g, c.b]), 3
-    ));
-    
     geometry.attributes.position.needsUpdate = true;
+}
+
+// Update particle colors based on current palette
+function updateParticleColors(time) {
+    const paletteCount = colorPalettes.length;
+    const cycleTime = time * params.colorCycleSpeed;
+    const paletteIndex = Math.floor(cycleTime % paletteCount);
+    const nextPaletteIndex = (paletteIndex + 1) % paletteCount;
+    const blend = (cycleTime % 1);
+    
+    // Interpolate between current and next palette
+    const currentInside = new THREE.Color(colorPalettes[paletteIndex].inside);
+    const currentOutside = new THREE.Color(colorPalettes[paletteIndex].outside);
+    const nextInside = new THREE.Color(colorPalettes[nextPaletteIndex].inside);
+    const nextOutside = new THREE.Color(colorPalettes[nextPaletteIndex].outside);
+    
+    // Set current interpolated colors as actual Color objects
+    const insideColor = currentInside.lerp(nextInside, blend);
+    const outsideColor = currentOutside.lerp(nextOutside, blend);
+    
+    // Update all particle colors
+    const colors = geometry.attributes.color.array;
+    for(let i = 0; i < particleSystem.positions.length; i++) {
+        const mixColor = particleSystem.mixFactors[i];
+        const color = insideColor.clone().lerp(outsideColor, mixColor);
+        const idx = i * 3;
+        colors[idx] = color.r;
+        colors[idx + 1] = color.g;
+        colors[idx + 2] = color.b;
+    }
     geometry.attributes.color.needsUpdate = true;
 }
 
@@ -143,6 +201,11 @@ function generateGalaxy() {
     }
 
     geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(params.maxParticles * 3);
+    const colors = new Float32Array(params.maxParticles * 3);
+    
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     
     material = new THREE.PointsMaterial({
         size: params.size,
@@ -164,7 +227,10 @@ function generateGalaxy() {
         velocities: [],
         colors: [],
         ages: [],
-        alive: []
+        alive: [],
+        speedFactors: [],
+        rotationFactors: [],
+        mixFactors: []
     };
 }
 
@@ -305,6 +371,9 @@ function animate() {
     
     // Update particles
     updateParticles(deltaTime);
+    
+    // Update colors
+    updateParticleColors(time);
     
     // Pulsing effect with clamped brightness
     const pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5;
