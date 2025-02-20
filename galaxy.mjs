@@ -38,10 +38,13 @@ const params = {
     minBloomStrength: 0.4,
     particleLifetime: 5.0,
     emissionRate: 1000,
-    maxParticles: 50000,
+    maxParticles: 20000,     // Reduced from 50000
     rotationSpeed: 0.6,
     speedVariation: 0.5,     // How much particle speeds can vary
-    rotationVariation: 0.5   // How much rotation speeds can vary
+    rotationVariation: 0.5,   // How much rotation speeds can vary
+    bassThreshold: 0.3,
+    downbeatMultiplier: 5.0,
+    normalBeatMultiplier: 2.0
 };
 
 // Color palettes that we'll interpolate between
@@ -89,7 +92,7 @@ function generateParticle() {
     
     // Calculate size based on radius (smaller at edges)
     const sizeFactor = Math.pow(1 - (radius / params.radius), 0.5); // Square root for more medium-sized particles
-    const size = THREE.MathUtils.lerp(params.minSize, params.size, sizeFactor);
+    const size = THREE.MathUtils.lerp(params.minSize, params.size, sizeFactor) * 3; // Reduced from 50x to 3x
     
     // Randomize speed
     const speedFactor = 1 + (Math.random() - 0.5) * params.speedVariation;
@@ -108,14 +111,12 @@ function generateParticle() {
     tangentialVelocity.normalize().multiplyScalar(radius * params.rotationSpeed * rotationFactor);
     velocity.add(tangentialVelocity);
     
-    // Calculate color
+    // Calculate color mix factor
     const mixColor = radius / params.radius;
-    const color = new THREE.Color(params.insideColor).lerp(new THREE.Color(params.outsideColor), mixColor);
     
     return {
         position: position,
         velocity: velocity,
-        color: color,
         mixFactor: mixColor,
         size: size,
         age: 0,
@@ -126,25 +127,42 @@ function generateParticle() {
 }
 
 function updateParticles(deltaTime, particlesToAdd) {
-    // Add new particles
-    for(let i = 0; i < particlesToAdd; i++) {
-        const particle = generateParticle();
-        particleSystem.positions.push(particle.position);
-        particleSystem.velocities.push(particle.velocity);
-        particleSystem.ages.push(particle.age);
-        particleSystem.alive.push(particle.alive);
-        particleSystem.speedFactors.push(particle.speedFactor);
-        particleSystem.rotationFactors.push(particle.rotationFactor);
-        particleSystem.mixFactors.push(particle.mixFactor);
-        particleSystem.sizes.push(particle.size);
+    const positions = geometry.attributes.position.array;
+    const colors = geometry.attributes.color.array;
+    const sizes = geometry.attributes.size.array;
+    let needsPositionUpdate = false;
+    let needsColorUpdate = false;
+    let needsSizeUpdate = false;
+    
+    // Pre-allocate new particles
+    if (particlesToAdd > 0) {
+        const newParticles = [];
+        for(let i = 0; i < particlesToAdd; i++) {
+            newParticles.push(generateParticle());
+        }
+        
+        // Batch add all new particles
+        for(const particle of newParticles) {
+            const index = particleSystem.positions.length;
+            particleSystem.positions.push(particle.position);
+            particleSystem.velocities.push(particle.velocity);
+            particleSystem.ages.push(particle.age);
+            particleSystem.alive.push(particle.alive);
+            particleSystem.speedFactors.push(particle.speedFactor);
+            particleSystem.rotationFactors.push(particle.rotationFactor);
+            particleSystem.mixFactors.push(particle.mixFactor);
+            particleSystem.sizes.push(particle.size);
+            
+            // Set initial size in buffer
+            sizes[index] = particle.size;
+        }
+        needsPositionUpdate = true;
+        needsColorUpdate = true;
+        needsSizeUpdate = true;
     }
     
-    // Update positions array directly
-    const positions = geometry.attributes.position.array;
-    const sizes = geometry.attributes.size.array;
-    
     // Update existing particles
-    for(let i = particleSystem.positions.length - 1; i >= 0; i--) {
+    for(let i = 0; i < particleSystem.positions.length; i++) {
         if (!particleSystem.alive[i]) continue;
         
         // Update position
@@ -157,34 +175,44 @@ function updateParticles(deltaTime, particlesToAdd) {
         positions[idx] = pos.x;
         positions[idx + 1] = pos.y;
         positions[idx + 2] = pos.z;
-        
-        // Update size
         sizes[i] = particleSystem.sizes[i];
+        needsPositionUpdate = true;
+        needsSizeUpdate = true;
         
         // Update age
         particleSystem.ages[i] += deltaTime;
-        
-        // Kill old particles
         if (particleSystem.ages[i] >= params.particleLifetime) {
             particleSystem.alive[i] = false;
-            
-            // Remove dead particle
-            particleSystem.positions.splice(i, 1);
-            particleSystem.velocities.splice(i, 1);
-            particleSystem.ages.splice(i, 1);
-            particleSystem.alive.splice(i, 1);
-            particleSystem.speedFactors.splice(i, 1);
-            particleSystem.rotationFactors.splice(i, 1);
-            particleSystem.mixFactors.splice(i, 1);
-            particleSystem.sizes.splice(i, 1);
         }
     }
     
-    geometry.attributes.position.needsUpdate = true;
-    geometry.attributes.size.needsUpdate = true;
+    // Batch remove dead particles at the end
+    if (particleSystem.positions.some((_, i) => !particleSystem.alive[i])) {
+        particleSystem.positions = particleSystem.positions.filter((_, i) => particleSystem.alive[i]);
+        particleSystem.velocities = particleSystem.velocities.filter((_, i) => particleSystem.alive[i]);
+        particleSystem.ages = particleSystem.ages.filter((_, i) => particleSystem.alive[i]);
+        particleSystem.alive = particleSystem.alive.filter(alive => alive);
+        particleSystem.speedFactors = particleSystem.speedFactors.filter((_, i) => particleSystem.alive[i]);
+        particleSystem.rotationFactors = particleSystem.rotationFactors.filter((_, i) => particleSystem.alive[i]);
+        particleSystem.mixFactors = particleSystem.mixFactors.filter((_, i) => particleSystem.alive[i]);
+        particleSystem.sizes = particleSystem.sizes.filter((_, i) => particleSystem.alive[i]);
+        needsPositionUpdate = true;
+        needsColorUpdate = true;
+        needsSizeUpdate = true;
+    }
+    
+    // Only update buffers that changed
+    if (needsPositionUpdate) {
+        geometry.attributes.position.needsUpdate = true;
+    }
+    if (needsColorUpdate) {
+        geometry.attributes.color.needsUpdate = true;
+    }
+    if (needsSizeUpdate) {
+        geometry.attributes.size.needsUpdate = true;
+    }
 }
 
-// Update particle colors based on current palette and bass
 function updateParticleColors(time, forcedBlend = null) {
     const paletteCount = colorPalettes.length;
     const cycleTime = time * params.colorCycleSpeed;
@@ -213,6 +241,23 @@ function updateParticleColors(time, forcedBlend = null) {
         colors[idx + 2] = color.b;
     }
     geometry.attributes.color.needsUpdate = true;
+}
+
+function updateBackgroundColor(time, forcedBlend = null) {
+    const paletteCount = colorPalettes.length;
+    const cycleTime = time * params.colorCycleSpeed;
+    const paletteIndex = Math.floor(cycleTime) % paletteCount;
+    const nextPaletteIndex = (paletteIndex + 1) % paletteCount;
+    const blend = forcedBlend !== null ? forcedBlend : cycleTime % 1;
+    
+    // Get darker versions of the palette colors for background
+    const currentColor = new THREE.Color(colorPalettes[paletteIndex].outside).multiplyScalar(0.0);
+    const nextColor = new THREE.Color(colorPalettes[nextPaletteIndex].outside).multiplyScalar(0.0);
+    
+    // Smoothly interpolate between colors
+    const targetBackgroundColor = new THREE.Color();
+    targetBackgroundColor.copy(currentColor).lerp(nextColor, blend);
+    scene.background = targetBackgroundColor;
 }
 
 function generateGalaxy() {
@@ -309,57 +354,145 @@ function updatePositionDisplay() {
 }
 
 // Audio setup
-let audioContext;
-let analyzer;
-let audioSource;
-let dataArray;
-let audio;
+let audioContext = null;
+let analyzer = null;
+let audioElement = null;
+let audioSource = null;
 let isAudioInitialized = false;
+let dataArray = null;
+let hasInteracted = false;
+let lastFileHandle = null;
 
-// Initialize audio
-function initAudio() {
-    if (isAudioInitialized) return;
+// Load and play the last file if it exists
+function loadLastFile() {
+    const fileInput = document.getElementById('audioFile');
+    // Trigger file input to load the last selected file
+    if (fileInput.files && fileInput.files[0]) {
+        handleAudioFile(fileInput.files[0]);
+    }
+}
+
+function handleAudioFile(file) {
+    if (!file) return;
     
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    analyzer = audioContext.createAnalyser();
-    analyzer.fftSize = 64; // Keep it small for performance
-    analyzer.smoothingTimeConstant = 0.5; // Faster response to music
+    // Create or update audio element
+    if (!audioElement) {
+        audioElement = new Audio();
+        audioElement.addEventListener('ended', () => {
+            audioElement.currentTime = 0;
+            audioElement.play();
+        });
+    }
     
-    dataArray = new Uint8Array(analyzer.frequencyBinCount);
-    audio = new Audio();
+    // Clean up old audio source if it exists
+    if (audioSource) {
+        audioSource.disconnect();
+        audioSource = null;
+    }
     
-    isAudioInitialized = true;
+    // Set up audio context if needed
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyzer = audioContext.createAnalyser();
+        analyzer.fftSize = 1024; // Increased for better BPM detection
+        dataArray = new Uint8Array(analyzer.frequencyBinCount);
+        initBPMDetection();
+    }
+    
+    // Use URL.createObjectURL for the audio source
+    const fileUrl = URL.createObjectURL(file);
+    audioElement.src = fileUrl;
+    
+    // Wait for audio to be loaded before connecting
+    audioElement.addEventListener('canplay', () => {
+        // Create new audio source
+        audioSource = audioContext.createMediaElementSource(audioElement);
+        audioSource.connect(analyzer);
+        analyzer.connect(audioContext.destination);
+        
+        // Start playback
+        audioElement.play().catch(console.error);
+        isAudioInitialized = true;
+    }, { once: true }); // Only handle the first canplay event
+    
+    // Clean up old URL when loading new one
+    audioElement.addEventListener('error', () => {
+        URL.revokeObjectURL(fileUrl);
+    }, { once: true });
+}
+
+// BPM detection
+let bpmTimeData = null;
+let lastPeakTime = 0;
+let intervalTimes = [];
+let beatCount = 0;
+const minBPM = 60;
+const maxBPM = 200;
+const minPeakInterval = (60 / maxBPM) * 1000;
+const maxPeakInterval = (60 / minBPM) * 1000;
+const energyThreshold = 0.5; // Lowered threshold
+let currentBPM = 120;
+let isDownbeat = false;
+let debugText = '';
+
+function initBPMDetection() {
+    bpmTimeData = new Float32Array(analyzer.fftSize);
+}
+
+function detectBPM() {
+    if (!analyzer || !bpmTimeData) return;
+    
+    analyzer.getFloatTimeDomainData(bpmTimeData);
+    
+    let energy = 0;
+    for (let i = 0; i < bpmTimeData.length; i++) {
+        energy += bpmTimeData[i] * bpmTimeData[i];
+    }
+    energy = Math.sqrt(energy / bpmTimeData.length);
+    
+    const now = performance.now();
+    
+    // Check if this is a peak
+    if (energy > energyThreshold && (now - lastPeakTime) > minPeakInterval) {
+        const interval = now - lastPeakTime;
+        
+        if (interval < maxPeakInterval) {
+            intervalTimes.push(interval);
+            if (intervalTimes.length > 20) {
+                intervalTimes.shift();
+            }
+            
+            // Track beat count for downbeat detection
+            beatCount = (beatCount + 1) % 4;
+            isDownbeat = (beatCount === 0);
+            
+            debugText = `Beat ${beatCount + 1}, Energy: ${energy.toFixed(2)}`;
+            
+            if (intervalTimes.length > 3) {
+                const sortedIntervals = [...intervalTimes].sort((a, b) => a - b);
+                const medianInterval = sortedIntervals[Math.floor(sortedIntervals.length / 2)];
+                const bpm = Math.round(60000 / medianInterval);
+                
+                if (bpm >= minBPM && bpm <= maxBPM) {
+                    currentBPM = bpm;
+                }
+            }
+        }
+        lastPeakTime = now;
+    }
+    
+    return { bpm: currentBPM, isDownbeat, energy };
 }
 
 // Setup audio file handling
 document.getElementById('startAudio').addEventListener('click', () => {
-    initAudio();
     audioContext.resume();
 });
 
 document.getElementById('audioFile').addEventListener('change', (event) => {
-    initAudio();
-    
     const file = event.target.files[0];
     if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const arrayBuffer = e.target.result;
-            audioContext.decodeAudioData(arrayBuffer)
-                .then(buffer => {
-                    if (audioSource) {
-                        audioSource.disconnect();
-                    }
-                    audioSource = audioContext.createBufferSource();
-                    audioSource.buffer = buffer;
-                    audioSource.connect(analyzer);
-                    analyzer.connect(audioContext.destination);
-                    audioSource.start(0);
-                    audioSource.loop = true;
-                })
-                .catch(e => console.error("Error decoding audio:", e));
-        };
-        reader.readAsArrayBuffer(file);
+        handleAudioFile(file);
     }
 });
 
@@ -445,44 +578,49 @@ function animate() {
         const elapsed = currentTime - lastTime;
         if (elapsed >= 1000) {
             const fps = Math.round((frameCount * 1000) / elapsed);
-            fpsElement.textContent = `FPS: ${fps}`;
+            fpsElement.textContent = `FPS: ${fps} | BPM: ${currentBPM} | ${debugText}`;
             frameCount = 0;
             lastTime = currentTime;
         }
     }
     
-    let emissionMultiplier = 1.0;
+    let emissionMultiplier = 0;
     let particleCountMultiplier = 1.0;
     let colorBlend = null;
-    let pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5; // Default animation
-    let bloomStrength = params.bloomStrength;
-    let bass = 0, mids = 0, highs = 0;
     
     if (isAudioInitialized && analyzer) {
         analyzer.getByteFrequencyData(dataArray);
         
-        // Get frequency bands with exponential scaling
-        bass = Math.pow(average(dataArray.slice(0, 4)) / 255, 2);
-        mids = Math.pow(average(dataArray.slice(4, 21)) / 255, 2);
-        highs = Math.pow(average(dataArray.slice(21, 32)) / 255, 2);
+        const bass = Math.pow(average(dataArray.slice(1, 3)) / 255, 3);
+        const mids = Math.pow(average(dataArray.slice(4, 21)) / 255, 2);
+        const highs = Math.pow(average(dataArray.slice(21, 32)) / 255, 2);
         
-        // Bass controls color transitions
-        colorBlend = bass;
+        // Detect BPM and downbeats
+        const bpmInfo = detectBPM();
         
-        // Mids control emission rate
-        emissionMultiplier = 0.2 + mids * 3.0; // Range: 0.2x to 3.2x normal rate
+        // Bass controls emission with bigger bursts on downbeats
+        if (bass > params.bassThreshold) {
+            emissionMultiplier = bass * (bpmInfo.isDownbeat ? params.downbeatMultiplier : params.normalBeatMultiplier);
+        }
+        
+        // Mids control color transitions for both particles and background
+        colorBlend = mids;
+        updateParticleColors(time, colorBlend);
+        updateBackgroundColor(time, colorBlend);
         
         // Highs control max particles
-        particleCountMultiplier = 0.5 + highs * 2.0; // Range: 0.5x to 2.5x normal count
-        params.maxParticles = Math.floor(50000 * particleCountMultiplier);
+        particleCountMultiplier = 0.5 + highs * 1.5;
+        params.maxParticles = Math.floor(20000 * particleCountMultiplier);
         
         // Update pulse and bloom
-        pulse = bass * 2.0 + 0.5; // Range: 0.5 to 2.5
-        bloomStrength = params.bloomStrength * (1 + mids * 2.0);
+        const pulse = bass * 2.0 + 0.5;
+        const bloomStrength = params.bloomStrength * (1 + mids * 2.0);
+        material.uniforms.globalSize.value = pulse;
+        bloomPass.strength = THREE.MathUtils.lerp(params.minBloomStrength, params.maxBloomStrength * 2, pulse);
     }
     
     // Update particles with dynamic emission rate
-    const baseEmissionRate = 1000;
+    const baseEmissionRate = 1000; // Increased base rate
     const effectiveEmissionRate = Math.floor(baseEmissionRate * emissionMultiplier);
     const particlesToAdd = Math.min(
         Math.floor(effectiveEmissionRate * deltaTime),
@@ -491,17 +629,6 @@ function animate() {
     
     // Update particles
     updateParticles(deltaTime, particlesToAdd);
-    
-    // Update colors with bass-driven transitions
-    updateParticleColors(time, colorBlend);
-    
-    // Apply visual effects
-    material.uniforms.globalSize.value = pulse;
-    bloomPass.strength = THREE.MathUtils.lerp(
-        params.minBloomStrength,
-        params.maxBloomStrength * 2,
-        pulse
-    );
     
     // Rotation
     if (points) {
@@ -541,4 +668,27 @@ function average(arr) {
     return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
-animate();
+// Initialize everything
+function init() {
+    // Set up file input handler
+    const fileInput = document.getElementById('audioFile');
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            handleAudioFile(file);
+        }
+    });
+    
+    // Wait for first interaction
+    document.addEventListener('click', () => {
+        if (!hasInteracted) {
+            hasInteracted = true;
+            loadLastFile();
+        }
+    }, { once: true }); // Only need to handle first click
+    
+    // Start animation
+    animate();
+}
+
+init();
