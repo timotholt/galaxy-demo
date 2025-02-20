@@ -125,13 +125,8 @@ function generateParticle() {
     };
 }
 
-function updateParticles(deltaTime) {
+function updateParticles(deltaTime, particlesToAdd) {
     // Add new particles
-    const particlesToAdd = Math.min(
-        Math.floor(params.emissionRate * deltaTime),
-        params.maxParticles - particleSystem.positions.length
-    );
-    
     for(let i = 0; i < particlesToAdd; i++) {
         const particle = generateParticle();
         particleSystem.positions.push(particle.position);
@@ -189,13 +184,13 @@ function updateParticles(deltaTime) {
     geometry.attributes.size.needsUpdate = true;
 }
 
-// Update particle colors based on current palette
-function updateParticleColors(time) {
+// Update particle colors based on current palette and bass
+function updateParticleColors(time, forcedBlend = null) {
     const paletteCount = colorPalettes.length;
     const cycleTime = time * params.colorCycleSpeed;
     const paletteIndex = Math.floor(cycleTime % paletteCount);
     const nextPaletteIndex = (paletteIndex + 1) % paletteCount;
-    const blend = (cycleTime % 1);
+    const blend = forcedBlend !== null ? forcedBlend : (cycleTime % 1);
     
     // Interpolate between current and next palette
     const currentInside = new THREE.Color(colorPalettes[paletteIndex].inside);
@@ -456,49 +451,55 @@ function animate() {
         }
     }
     
-    // Update particles
-    updateParticles(deltaTime);
-    
-    // Update colors
-    updateParticleColors(time);
-    
-    // Audio reactive updates
+    let emissionMultiplier = 1.0;
+    let particleCountMultiplier = 1.0;
+    let colorBlend = null;
     let pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5; // Default animation
     let bloomStrength = params.bloomStrength;
+    let bass = 0, mids = 0, highs = 0;
     
     if (isAudioInitialized && analyzer) {
         analyzer.getByteFrequencyData(dataArray);
         
-        // Get frequency bands - use exponential scaling for more dramatic effect
-        const bass = Math.pow(average(dataArray.slice(0, 4)) / 255, 2);
-        const mids = Math.pow(average(dataArray.slice(4, 21)) / 255, 2);
-        const highs = Math.pow(average(dataArray.slice(21, 32)) / 255, 2);
+        // Get frequency bands with exponential scaling
+        bass = Math.pow(average(dataArray.slice(0, 4)) / 255, 2);
+        mids = Math.pow(average(dataArray.slice(4, 21)) / 255, 2);
+        highs = Math.pow(average(dataArray.slice(21, 32)) / 255, 2);
         
-        // Much more dramatic size pulsing
+        // Bass controls color transitions
+        colorBlend = bass;
+        
+        // Mids control emission rate
+        emissionMultiplier = 0.2 + mids * 3.0; // Range: 0.2x to 3.2x normal rate
+        
+        // Highs control max particles
+        particleCountMultiplier = 0.5 + highs * 2.0; // Range: 0.5x to 2.5x normal count
+        params.maxParticles = Math.floor(50000 * particleCountMultiplier);
+        
+        // Update pulse and bloom
         pulse = bass * 2.0 + 0.5; // Range: 0.5 to 2.5
-        
-        // Stronger bloom effect
         bloomStrength = params.bloomStrength * (1 + mids * 2.0);
-        
-        // More dramatic rotation and movement
-        params.rotationSpeed = 0.2 + highs * 2.0;
-        
-        // Add some vertical movement based on mids
-        points.position.y = Math.sin(time) * mids * 2.0;
-        
-        // Scale the entire galaxy with the bass
-        const scale = 1.0 + bass * 0.5;
-        points.scale.set(scale, scale, scale);
-        
-        // Color cycle speed affected by highs
-        params.colorCycleSpeed = 0.3 + highs * 0.5;
     }
     
-    // Apply effects
+    // Update particles with dynamic emission rate
+    const baseEmissionRate = 1000;
+    const effectiveEmissionRate = Math.floor(baseEmissionRate * emissionMultiplier);
+    const particlesToAdd = Math.min(
+        Math.floor(effectiveEmissionRate * deltaTime),
+        params.maxParticles - particleSystem.positions.length
+    );
+    
+    // Update particles
+    updateParticles(deltaTime, particlesToAdd);
+    
+    // Update colors with bass-driven transitions
+    updateParticleColors(time, colorBlend);
+    
+    // Apply visual effects
     material.uniforms.globalSize.value = pulse;
     bloomPass.strength = THREE.MathUtils.lerp(
         params.minBloomStrength,
-        params.maxBloomStrength * 2,  // Double the max bloom
+        params.maxBloomStrength * 2,
         pulse
     );
     
@@ -531,7 +532,7 @@ function animate() {
     // Update position display
     updatePositionDisplay();
     
-    // Render with post-processing
+    // Render
     composer.render();
 }
 
