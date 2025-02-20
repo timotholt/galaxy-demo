@@ -11,6 +11,11 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x000000, 1);
 document.body.appendChild(renderer.domElement);
 
+// Create galaxy geometry
+let geometry = null;
+let material = null;
+let points = null;
+
 // Galaxy parameters
 const params = {
     particles: 50000,
@@ -27,8 +32,141 @@ const params = {
     bloomThreshold: 0.2,
     pulseSpeed: 2.0,
     maxBloomStrength: 1.2,
-    minBloomStrength: 0.4
+    minBloomStrength: 0.4,
+    particleLifetime: 5.0,    // How long particles live in seconds
+    emissionRate: 1000,       // Particles per second
+    maxParticles: 50000,      // Maximum particles in system
+    rotationSpeed: 0.6        // Rotation speed parameter
 };
+
+// Particle system
+let particleSystem = {
+    positions: [],      // Array of Vector3
+    velocities: [],     // Array of Vector3
+    colors: [],        // Array of Color
+    ages: [],          // Array of numbers (seconds)
+    alive: []          // Array of booleans
+};
+
+function generateParticle() {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = Math.random() * params.radius;
+    const branchAngle = (angle + ((Math.PI * 2) / params.branches) * Math.floor(Math.random() * params.branches)) % (Math.PI * 2);
+    
+    // Start from center
+    const position = new THREE.Vector3(0, 0, 0);
+    
+    // Calculate target position with spin
+    const spinAngle = radius * params.spin;
+    const targetX = Math.cos(branchAngle + spinAngle) * radius;
+    const targetY = Math.random() * 0.2 - 0.1;
+    const targetZ = Math.sin(branchAngle + spinAngle) * radius;
+    
+    // Calculate velocity (direction from center to target)
+    const velocity = new THREE.Vector3(targetX, targetY, targetZ);
+    velocity.multiplyScalar(1.0 / params.particleLifetime); // Speed to reach target over lifetime
+    
+    // Add tangential velocity for rotation
+    const tangentialVelocity = new THREE.Vector3(-targetZ, 0, targetX);
+    tangentialVelocity.normalize().multiplyScalar(radius * params.rotationSpeed);
+    velocity.add(tangentialVelocity);
+    
+    // Calculate color
+    const mixColor = radius / params.radius;
+    const color = new THREE.Color(params.insideColor).lerp(new THREE.Color(params.outsideColor), mixColor);
+    
+    return {
+        position: position,
+        velocity: velocity,
+        color: color,
+        age: 0,
+        alive: true
+    };
+}
+
+function updateParticles(deltaTime) {
+    // Add new particles
+    const particlesToAdd = Math.min(
+        Math.floor(params.emissionRate * deltaTime),
+        params.maxParticles - particleSystem.positions.length
+    );
+    
+    for(let i = 0; i < particlesToAdd; i++) {
+        const particle = generateParticle();
+        particleSystem.positions.push(particle.position);
+        particleSystem.velocities.push(particle.velocity);
+        particleSystem.colors.push(particle.color);
+        particleSystem.ages.push(particle.age);
+        particleSystem.alive.push(particle.alive);
+    }
+    
+    // Update existing particles
+    for(let i = particleSystem.positions.length - 1; i >= 0; i--) {
+        if (!particleSystem.alive[i]) continue;
+        
+        // Update position
+        particleSystem.positions[i].add(particleSystem.velocities[i].clone().multiplyScalar(deltaTime));
+        
+        // Update age
+        particleSystem.ages[i] += deltaTime;
+        
+        // Kill old particles
+        if (particleSystem.ages[i] >= params.particleLifetime) {
+            particleSystem.alive[i] = false;
+            
+            // Remove dead particle
+            particleSystem.positions.splice(i, 1);
+            particleSystem.velocities.splice(i, 1);
+            particleSystem.colors.splice(i, 1);
+            particleSystem.ages.splice(i, 1);
+            particleSystem.alive.splice(i, 1);
+        }
+    }
+    
+    // Update geometry
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(
+        particleSystem.positions.flatMap(p => [p.x, p.y, p.z]), 3
+    ));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(
+        particleSystem.colors.flatMap(c => [c.r, c.g, c.b]), 3
+    ));
+    
+    geometry.attributes.position.needsUpdate = true;
+    geometry.attributes.color.needsUpdate = true;
+}
+
+function generateGalaxy() {
+    if (points !== null) {
+        geometry.dispose();
+        material.dispose();
+        scene.remove(points);
+    }
+
+    geometry = new THREE.BufferGeometry();
+    
+    material = new THREE.PointsMaterial({
+        size: params.size,
+        sizeAttenuation: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexColors: true,
+        transparent: true,
+        alphaMap: particleTexture,
+        opacity: 0.6
+    });
+
+    points = new THREE.Points(geometry, material);
+    scene.add(points);
+    
+    // Reset particle system
+    particleSystem = {
+        positions: [],
+        velocities: [],
+        colors: [],
+        ages: [],
+        alive: []
+    };
+}
 
 // Create circular texture for particles
 const particleTexture = new THREE.CanvasTexture((() => {
@@ -60,78 +198,6 @@ const bloomPass = new UnrealBloomPass(
 const composer = new EffectComposer(renderer);
 composer.addPass(renderScene);
 composer.addPass(bloomPass);
-
-// Create galaxy geometry
-let geometry = null;
-let material = null;
-let points = null;
-
-function generateGalaxy() {
-    if (points !== null) {
-        geometry.dispose();
-        material.dispose();
-        scene.remove(points);
-    }
-
-    geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.particles * 3);
-    const colors = new Float32Array(params.particles * 3);
-
-    const insideColor = new THREE.Color(params.insideColor);
-    const outsideColor = new THREE.Color(params.outsideColor);
-
-    for (let i = 0; i < params.particles; i++) {
-        const i3 = i * 3;
-
-        // Position
-        const radius = Math.random() * params.radius;
-        const spinAngle = radius * params.spin;
-        const branchAngle = ((i % params.branches) / params.branches) * Math.PI * 2;
-
-        const randomX = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
-        const randomY = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
-        const randomZ = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
-
-        positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
-        positions[i3 + 1] = randomY;
-        positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
-
-        // Color
-        const mixedColor = insideColor.clone();
-        mixedColor.lerp(outsideColor, radius / params.radius);
-
-        colors[i3] = mixedColor.r;
-        colors[i3 + 1] = mixedColor.g;
-        colors[i3 + 2] = mixedColor.b;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    material = new THREE.PointsMaterial({
-        size: params.size,
-        sizeAttenuation: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        vertexColors: true,
-        transparent: true,
-        alphaMap: particleTexture,
-        opacity: 0.6
-    });
-
-    points = new THREE.Points(geometry, material);
-    scene.add(points);
-    
-    console.log('Galaxy generated:', {
-        geometryAttributes: Object.keys(geometry.attributes),
-        materialProperties: {
-            size: material.size,
-            transparent: material.transparent,
-            blending: material.blending
-        },
-        sceneChildren: scene.children.length
-    });
-}
 
 // Set up camera
 camera.position.x = 0;
@@ -202,18 +268,26 @@ function animate() {
     requestAnimationFrame(animate);
     
     const time = Date.now() * 0.001;
+    const deltaTime = 1/60; // Fixed timestep
+    
+    // Update particles
+    updateParticles(deltaTime);
     
     // Pulsing effect with clamped brightness
-    const pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5; // Normalized to 0-1
-    material.size = params.size * (pulse * 0.3 + 0.7); // Less size variation
+    const pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5;
+    material.size = params.size * (pulse * 0.3 + 0.7);
     
-    // Clamp bloom strength between min and max values
     const bloomStrength = THREE.MathUtils.lerp(
         params.minBloomStrength,
         params.maxBloomStrength,
         pulse
     );
     bloomPass.strength = bloomStrength;
+    
+    // Rotation
+    if (points) {
+        points.rotation.y += deltaTime * params.rotationSpeed * 0.5;
+    }
     
     // Movement
     const moveVector = new THREE.Vector3();
@@ -232,7 +306,6 @@ function animate() {
     targetY = mouseY * 0.001;
 
     if (points) {
-        points.rotation.y += 0.001;
         points.rotation.x += (targetY - points.rotation.x) * 0.05;
         points.rotation.z += (targetX - points.rotation.z) * 0.05;
     }
