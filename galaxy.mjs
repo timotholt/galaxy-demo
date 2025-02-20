@@ -30,9 +30,11 @@ const params = {
     insideColor: '#ff6030',   // Warm orange
     outsideColor: '#1b3984',  // Cool blue
     colorCycleSpeed: 0.3,     // How fast colors change
-    bloomStrength: 0.8,
-    bloomRadius: 0.75,
-    bloomThreshold: 0.2,
+    bloomStrength: 0.5,     // Reduced from 0.8
+    bloomRadius: 0.5,       // Reduced from 0.75
+    bloomThreshold: 0.3,    // Increased from 0.2
+    maxBrightness: 0.3,     // Maximum brightness multiplier for any particle
+    centerBrightness: 0.1,  // Additional brightness reduction for center particles
     pulseSpeed: 2.0,
     maxBloomStrength: 1.2,
     minBloomStrength: 0.4,
@@ -42,9 +44,11 @@ const params = {
     rotationSpeed: 0.6,
     speedVariation: 0.5,     // How much particle speeds can vary
     rotationVariation: 0.5,   // How much rotation speeds can vary
+    
+    // Bass controls emission with bigger bursts on downbeats
     bassThreshold: 0.3,
-    downbeatMultiplier: 5.0,
-    normalBeatMultiplier: 2.0
+    downbeatMultiplier: 3.0,
+    normalBeatMultiplier: 1.0
 };
 
 // Color palettes that we'll interpolate between
@@ -268,9 +272,9 @@ function generateGalaxy() {
     }
 
     geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.maxParticles * 3);
-    const colors = new Float32Array(params.maxParticles * 3);
-    const sizes = new Float32Array(params.maxParticles);
+    const positions = new Float32Array(params.particles * 3);
+    const colors = new Float32Array(params.particles * 3);
+    const sizes = new Float32Array(params.particles);
     
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -322,6 +326,37 @@ function generateGalaxy() {
         mixFactors: [],
         sizes: []
     };
+    
+    const insideColor = new THREE.Color(params.insideColor);
+    const outsideColor = new THREE.Color(params.outsideColor);
+
+    for(let i = 0; i < params.particles; i++) {
+        const i3 = i * 3;
+        const radius = Math.random() * params.radius;
+        const spinAngle = radius * params.spin;
+        const branchAngle = (i % params.branches) / params.branches * Math.PI * 2;
+        
+        const randomX = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
+        const randomY = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
+        const randomZ = Math.pow(Math.random(), params.randomnessPower) * (Math.random() < 0.5 ? 1 : -1);
+
+        positions[i3    ] = Math.cos(branchAngle + spinAngle) * radius + randomX;
+        positions[i3 + 1] = randomY * params.height;
+        positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
+
+        // Color
+        const mixedColor = insideColor.clone();
+        const centerDistance = radius / params.radius;
+        mixedColor.lerp(outsideColor, centerDistance);
+        
+        // Apply brightness clamping
+        const brightness = Math.min(1.0 - (centerDistance * params.centerBrightness), params.maxBrightness);
+        mixedColor.multiplyScalar(brightness);
+
+        colors[i3    ] = mixedColor.r;
+        colors[i3 + 1] = mixedColor.g;
+        colors[i3 + 2] = mixedColor.b;
+    }
 }
 
 // Post processing setup
