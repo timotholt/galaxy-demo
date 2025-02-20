@@ -375,7 +375,7 @@ composer.addPass(bloomPass);
 // Set up camera
 camera.position.x = 0;
 camera.position.y = -0.20;
-camera.position.z = 3.35;
+camera.position.z = 10;
 
 // Position display elements
 const posX = document.getElementById('pos-x');
