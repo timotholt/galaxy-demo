@@ -236,24 +236,36 @@ function generateGalaxy() {
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
     
-    material = new THREE.PointsMaterial({
-        size: 1.0,  // Base size multiplier
-        sizeAttenuation: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        vertexColors: true,
-        transparent: true,
-        alphaMap: particleTexture,
-        opacity: 0.6,
+    material = new THREE.ShaderMaterial({
+        uniforms: {
+            globalSize: { value: 1.0 }
+        },
         vertexShader: `
+            uniform float globalSize;
             attribute float size;
+            varying vec3 vColor;
+            
             void main() {
+                vColor = color;
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                gl_PointSize = size * (300.0 / -mvPosition.z);
                 gl_Position = projectionMatrix * mvPosition;
+                gl_PointSize = size * globalSize * (300.0 / length(mvPosition.xyz));
             }
         `,
-        fragmentShader: material ? material.fragmentShader : null
+        fragmentShader: `
+            varying vec3 vColor;
+            
+            void main() {
+                float r = length(gl_PointCoord - vec2(0.5));
+                if (r > 0.5) discard;
+                float alpha = 0.6 * (1.0 - r * 2.0);
+                gl_FragColor = vec4(vColor, alpha);
+            }
+        `,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        transparent: true,
+        vertexColors: true
     });
 
     points = new THREE.Points(geometry, material);
@@ -263,7 +275,6 @@ function generateGalaxy() {
     particleSystem = {
         positions: [],
         velocities: [],
-        colors: [],
         ages: [],
         alive: [],
         speedFactors: [],
@@ -272,24 +283,6 @@ function generateGalaxy() {
         sizes: []
     };
 }
-
-// Create circular texture for particles
-const particleTexture = new THREE.CanvasTexture((() => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width = 32;
-    canvas.height = 32;
-    
-    // Create a radial gradient for a soft circle
-    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-    gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 32, 32);
-    
-    return canvas;
-})());
 
 // Post processing setup
 const renderScene = new RenderPass(scene, camera);
@@ -393,7 +386,7 @@ function animate() {
     requestAnimationFrame(animate);
     
     const time = Date.now() * 0.001;
-    const deltaTime = 1/60; // Fixed timestep
+    const deltaTime = 1/60;
     
     // Update FPS counter
     if (showFPS) {
@@ -416,7 +409,7 @@ function animate() {
     
     // Pulsing effect with clamped brightness
     const pulse = Math.sin(time * params.pulseSpeed) * 0.5 + 0.5;
-    material.size = params.size * (pulse * 0.3 + 0.7);
+    material.uniforms.globalSize.value = pulse * 0.3 + 0.7;
     
     const bloomStrength = THREE.MathUtils.lerp(
         params.minBloomStrength,
